@@ -1,0 +1,12 @@
+tcn_10d:
+  model_type: tcn
+  model_dir: /data/nzh/ylmodel_online/models/tcn_10d
+  model_path: null
+  label: ret_open_10min-10d-rank
+  seq_len: 5
+  hyper_parameter:
+    input_size: 213
+    output_size: 1
+    num_channels: [16, 32, 16]
+    kernel_size: 3
+    dropout: 0.15

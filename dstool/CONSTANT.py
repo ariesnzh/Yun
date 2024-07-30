@@ -1,0 +1,5 @@
+# HDF_BASE_FLODER = '/data/all_data/QuoteData'
+HDF_BASE_FLODER = '/data/total_data/all_data/DataSet_Derived'
+# HDF_STOCK_FLODER = HDF_BASE_FLODER+'/STOCK'
+HDF_STOCK_FLODER = HDF_BASE_FLODER+'/STOCK/hdf5'
+HDF_FATCOR_FLODER = "/data/all_data/QuoteData"+'/FACTOR'

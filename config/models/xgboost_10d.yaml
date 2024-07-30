@@ -1,0 +1,18 @@
+xgboost_10d:
+  model_type: xgboost
+  model_dir: /data/nzh/ylmodel_online/models/xgboost_10d
+  model_path: null
+  label: ret_open_10min-10d-rank
+  seq_len: 1
+  hyper_parameter:
+    n_estimators: 200
+    max_depth: 6
+    min_child_weight: 1
+    subsample: 1
+    colsample_bytree: 0.8
+    gamma: 0.5
+    reg_alpha: 0
+    reg_lambda: 1
+    learning_rate: 0.02
+    eval_metric: rmse
+    tree_method: gpu_hist
