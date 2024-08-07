@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from utils.global_parameters import N_JOBS
+from common.global_parameters import N_JOBS
 
 
 def data_normlize(panel):

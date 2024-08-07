@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from utils.global_parameters import Model_Module_Map
+from common.global_parameters import Model_Module_Map
 
 
 class DLInferenceInterface:

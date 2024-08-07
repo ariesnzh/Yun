@@ -16,15 +16,23 @@ from pytorch_tabnet.tab_model import TabNetRegressor
 from torch.utils.data import DataLoader
 
 import dstool
-from tools.ensemble_tools import voting_ensemble
-from tools.data_tools import *
-from utils.global_parameters import *
-from tools.model_tools import *
-from tools.time_tools import get_k_trading_days_before, get_next_trading_day
+from online_tools.ensemble_tools import voting_ensemble
+from online_tools.data_tools import *
+from common.global_parameters import *
+from online_tools.model_tools import *
+from online_tools.time_tools import get_k_trading_days_before, get_next_trading_day
+
+
+ensemble_result = None
+output_path = None
+predictions_list = []
+
+inference_date: str = None  # 开启推理日期（需要预测日期之前）
+cache_dir: str = None
 
 
 class Deployment:
-	def __init__(self, factor_list: List[str], inference_date: str, model_id: str, model_path: str, model_hp: DictConfig, seq_len=1, bias: int = 20):
+	def __init__(self, factor_list: List[str], inference_date: str, model_id: str, model_path: str, model_hp: DictConfig, seq_len=1, bias: int = 0):
 		self.factor_list = factor_list
 		self.inference_date = inference_date
 		self.model_id = model_id
@@ -51,7 +59,7 @@ class Deployment:
 	def get_preprocess_data(self):
 		logger.info('Preprocess data')
 		factor_preprocess = pd.DataFrame()
-		for name in self.factor_list:
+		for name in tqdm(self.factor_list):
 			author = re.search(r'.*?_([a-zA-Z]*)[0-9]+',name).group(1)
 			factor = dstool.datadeal.read_factor_data(factor_name=name, author=author, start=self.start_date, end=self.end_date)
 			factor.index = pd.to_datetime(factor.index).strftime('%Y-%m-%d')
@@ -63,12 +71,17 @@ class Deployment:
 		if factor_preprocess.isna().sum().sum() != 0:
 			raise ValueError('factor_preprocess_df has NaN !')
 		""" 保存到home目录下 """
-		cache_save_path = Path(os.path.join(os.path.dirname(__file__), 'cache_daily', self.inference_date))
+		# cache_save_path = Path(os.path.join(os.path.dirname(__file__), 'cache_daily', self.inference_date))
+		# if not cache_save_path.exists():
+		# 	cache_save_path.mkdir(parents=True, exist_ok=True)
+		# factor_preprocess.to_pickle(os.path.join(cache_save_path, 'factor_preprocess.pkl'))
+		""" 保存到data目录下 """
+		cache_save_path = Path(os.path.join(DATA_SAVE_PATH, 'cache_daily', self.inference_date))
 		if not cache_save_path.exists():
 			cache_save_path.mkdir(parents=True, exist_ok=True)
 		factor_preprocess.to_pickle(os.path.join(cache_save_path, 'factor_preprocess.pkl'))
-		""" 保存到data目录下 """
-		cache_save_path = Path(os.path.join(DATA_SAVE_PATH, 'cache_daily', self.inference_date))
+		""" 保存到schedule下 """
+		cache_save_path = Path(os.path.join(SCHEDULE_RES_SAVE_PATH, 'cache_daily', self.inference_date))
 		if not cache_save_path.exists():
 			cache_save_path.mkdir(parents=True, exist_ok=True)
 		factor_preprocess.to_pickle(os.path.join(cache_save_path, 'factor_preprocess.pkl'))
@@ -76,14 +89,24 @@ class Deployment:
 	
 	def save_predictions(self, preds: pd.DataFrame):
 		""" 保存到home目录下 """
-		cache_save_path = Path(os.path.join(os.path.dirname(__file__), 'cache_daily', self.inference_date))
+		# cache_save_path = Path(os.path.join(os.path.dirname(__file__), 'cache_daily', self.inference_date))
+		# if not cache_save_path.exists():
+		# 	cache_save_path.mkdir(parents=True, exist_ok=True)
+		# output_file = f'pred_{self.model_id}_result.pkl'
+		# preds.to_pickle(os.path.join(cache_save_path, output_file))
+
+		""" 保存到data目录下 """
+		cache_save_path = Path(os.path.join(RES_SAVE_PATH, 'cache_daily', self.inference_date))
 		if not cache_save_path.exists():
 			cache_save_path.mkdir(parents=True, exist_ok=True)
 		output_file = f'pred_{self.model_id}_result.pkl'
 		preds.to_pickle(os.path.join(cache_save_path, output_file))
-
-		""" 保存到data目录下 """
-		cache_save_path = Path(os.path.join(RES_SAVE_PATH, 'cache_daily', self.inference_date))
+		""" 保存到schedule用户下 """
+		global cache_dir
+		if cache_dir:
+			cache_save_path = Path(cache_dir)
+		else:
+			cache_save_path = Path(os.path.join(SCHEDULE_RES_SAVE_PATH, 'cache_daily', self.inference_date))
 		if not cache_save_path.exists():
 			cache_save_path.mkdir(parents=True, exist_ok=True)
 		output_file = f'pred_{self.model_id}_result.pkl'
@@ -166,14 +189,18 @@ class Deployment:
 
 
 @hydra.main(version_base=None, config_path=CONFIG_PATH, config_name=CONFIG_NAME)
-def online_interface(cfg: DictConfig):
-	today = datetime.today().strftime('%Y-%m-%d')
+def predict(cfg: DictConfig):
+	global inference_date
+	if inference_date:
+		today = inference_date
+	else:
+		today = datetime.today().strftime('%Y-%m-%d')
 	factor_list_file = get_latest_file(directory=FACTOR_LIST_PATH)
-	logger.info(factor_list_file)
+	logger.info(f'Factor list file:{factor_list_file}')
 	factor_list = pd.read_csv(factor_list_file, header=None).iloc[:, 0]
 	# factor_list = pd.read_csv(FACTOR_LIST_PATH, header=None).iloc[:, 0]
 	# 遍历每一个基模型
-	predictions_list = []
+	# predictions_list = []
 	for model_id in cfg.models:
 		logger.info(f'Model ID: {model_id}')
 		# 获取该基模型超参数
@@ -183,10 +210,11 @@ def online_interface(cfg: DictConfig):
 		else:
 			model_path = hp['model_path']
 		logger.info(f'Model path: {model_path}')
-		dp = Deployment(factor_list=factor_list, inference_date=today, model_id=model_id, model_path=model_path, model_hp=hp['hyper_parameter'], seq_len=hp['seq_len'], bias=20)
+		dp = Deployment(factor_list=factor_list, inference_date=today, model_id=model_id, model_path=model_path, model_hp=hp['hyper_parameter'], seq_len=hp['seq_len'], bias=0)
 		res = dp.inference()
 		predictions_list.append(res)
 		logger.info(f'Added results of {model_id}')
+	global ensemble_result
 	ensemble_result = voting_ensemble(predictions_list, weights=cfg['ensemble_weights'], is_rank=True)
 	""" 保存到home目录下 """
 	# cache_save_path = Path(os.path.join(os.path.dirname(__file__), 'cache_daily', today))
@@ -196,15 +224,46 @@ def online_interface(cfg: DictConfig):
 	# ensemble_result.to_pickle(output_path)
 	# logger.info(f'Save ensemble result: {output_path}')
 	""" 保存到data目录下 """
+	global output_path
 	cache_save_path = Path(os.path.join(RES_SAVE_PATH, 'cache_daily', today))
 	if not cache_save_path.exists():
 		cache_save_path.mkdir(parents=True, exist_ok=True)
 	output_path = os.path.join(cache_save_path, f'ensemble_result.pkl')
 	ensemble_result.to_pickle(output_path)
 	logger.info(f'Save ensemble result: {output_path}')
+	""" 保存到schedule用户下 """
+	global cache_dir
+	if cache_dir:
+		cache_save_path = Path(cache_dir)
+	else:
+		cache_save_path = Path(os.path.join(SCHEDULE_RES_SAVE_PATH, 'cache_daily', today))
+	if not cache_save_path.exists():
+		cache_save_path.mkdir(parents=True, exist_ok=True)
+	output_path = os.path.join(cache_save_path, f'ensemble_result.pkl')
+	ensemble_result.to_pickle(output_path)
+	logger.info(f'Save ensemble result: {output_path}')
+	# print(ensemble_result)
+	# print(output_path)
+	# print(predictions_list)
+	return ensemble_result, output_path, predictions_list
+
+
+def online_interface(date: str = None, output_dir: str = None):
+	"""
+	date: 开启推理的日期(不同于需要预测的日期，在需要预测的日期之前)
+	output_dir: 数据、结果缓存文件保存路径(使用时在cache_dir下默认会创建以日期命名的子文件夹,在该子文件夹中保存文件)
+	"""
+	if date:
+		global inference_date
+		inference_date = date
+	if output_dir:
+		global cache_dir
+		cache_dir = output_dir
+	predict()
 	return ensemble_result, output_path, predictions_list
 
 
 if __name__ == '__main__':
 	logger.add(f"{LOG_BASE_PATH}/{datetime.now().strftime('%Y-%m-%d_%H_%M_%S')}.log")
-	online_interface()
+	res = online_interface()
+	print(res)
